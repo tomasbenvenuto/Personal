@@ -67,6 +67,7 @@ Resumen:
 | `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `R2_BUCKET_NAME` | Storage de los PDFs |
 | `ANTHROPIC_API_KEY` | Generación con IA |
 | `MOODLE_BASE_URL` / `MOODLE_CRYPTO_KEY` | Sincronización con el aula virtual |
+| `CRON_SECRET` | Autentica la sincronización automática diaria (ver abajo) |
 
 ### CORS del bucket R2
 
@@ -84,6 +85,29 @@ Settings → CORS Policy, algo como:
   }
 ]
 ```
+
+### Sincronización automática del aula virtual (cron)
+
+Además del botón "Sincronizar ahora", `vercel.json` define un **Vercel Cron
+Job** que llama a `/api/cron/moodle-sync` todos los días a las 9:00 UTC
+(6:00 AM Argentina) una vez que la app está deployada — los crons de Vercel
+solo corren en producción, no en `npm run dev` local. Solo hace algo si ya
+conectaste tu cuenta de Moodle desde `/aula-virtual`; si no, no hace nada.
+
+Para habilitarlo:
+1. Cargá `CRON_SECRET` en las variables de entorno de Vercel (cualquier
+   string random, ver `.env.example`). Vercel lo manda automáticamente como
+   header al llamar al cron, así nadie más puede disparar esa sincronización.
+2. No hace falta ningún paso más — Vercel lee `vercel.json` solo al hacer
+   deploy y programa el cron.
+3. Podés cambiar el horario editando el `schedule` (formato cron estándar,
+   en UTC) en `vercel.json`.
+
+El plan gratuito (Hobby) de Vercel permite crons diarios sin costo. Si en
+algún momento sincronizás muchas materias con muchos PDFs nuevos a la vez,
+la sincronización tiene hasta 60 segundos por corrida (`maxDuration`) antes
+de cortarse — si hace falta más, corré "Sincronizar ahora" de nuevo, retoma
+donde quedó (no vuelve a importar lo ya traído).
 
 ## Publicar la web (hosting)
 

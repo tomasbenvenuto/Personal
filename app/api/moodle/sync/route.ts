@@ -4,6 +4,10 @@ import { prisma } from "@/lib/prisma";
 import { runMoodleSync } from "@/lib/moodle-sync";
 import { NotFoundError, toErrorResponse } from "@/lib/api-utils";
 
+// Allow extra time for a sync that downloads/extracts several new PDFs —
+// Hobby plan's default function timeout (10s) is too short for that.
+export const maxDuration = 60;
+
 export async function POST() {
   try {
     const userId = await requireUserId();
