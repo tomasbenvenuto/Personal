@@ -1,9 +1,11 @@
 "use client";
 
 import { signIn } from "next-auth/react";
+import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
 export default function LoginPage() {
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -23,7 +25,8 @@ export default function LoginPage() {
       setError("Usuario o contraseña incorrectos.");
       return;
     }
-    window.location.href = "/dashboard";
+    router.push("/dashboard");
+    router.refresh();
   }
 
   return (
