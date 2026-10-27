@@ -1,0 +1,276 @@
+// Prisma schema for the personal PDF study app.
+// Learn more: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// --- Auth.js (NextAuth) required models ---
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  /// bcrypt hash, set only for the owner's credentials login
+  passwordHash  String?
+  createdAt     DateTime  @default(now())
+
+  accounts      Account[]
+  sessions      Session[]
+  documents     Document[]
+  flashcards    Flashcard[]
+  examAttempts  ExamAttempt[]
+  moodleAccount MoodleAccount?
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// --- Core domain models ---
+
+enum DocumentStatus {
+  UPLOADED
+  EXTRACTING
+  READY
+  FAILED
+}
+
+enum DocumentSource {
+  MANUAL
+  MOODLE_SYNC
+}
+
+model Document {
+  id            String         @id @default(cuid())
+  userId        String
+  title         String
+  originalName  String
+  storageKey    String
+  fileSizeBytes Int
+  pageCount     Int?
+  extractedText String?        @db.Text
+  status        DocumentStatus @default(UPLOADED)
+  failureReason String?
+  source        DocumentSource @default(MANUAL)
+  courseId      String?
+  moodleFileUrl String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course          Course?          @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  annotations     Annotation[]
+  summary         Summary?
+  conceptMap      ConceptMap?
+  flashcards      Flashcard[]
+  quizQuestions   QuizQuestion[]
+  examSimulations ExamSimulation[]
+
+  @@index([userId])
+  @@index([courseId])
+}
+
+model Annotation {
+  id             String   @id @default(cuid())
+  documentId     String
+  pageNumber     Int
+  /// array of {x, y, width, height} normalized 0-1 relative to the page
+  highlightRects Json
+  selectedText   String   @db.Text
+  note           String?  @db.Text
+  color          String   @default("#ffe066")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId, pageNumber])
+}
+
+model Summary {
+  id         String   @id @default(cuid())
+  documentId String   @unique
+  content    String   @db.Text
+  model      String
+  createdAt  DateTime @default(now())
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+}
+
+model ConceptMap {
+  id         String   @id @default(cuid())
+  documentId String   @unique
+  /// [{id, label, description?}]
+  nodes      Json
+  /// [{id, source, target, label?}]
+  edges      Json
+  model      String
+  createdAt  DateTime @default(now())
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+}
+
+model Flashcard {
+  id          String    @id @default(cuid())
+  documentId  String
+  userId      String
+  question    String    @db.Text
+  answer      String    @db.Text
+  // SM-2 scheduling state
+  easeFactor  Float     @default(2.5)
+  interval    Int       @default(0)
+  repetitions Int       @default(0)
+  dueDate     DateTime  @default(now())
+  lastReviewedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, dueDate])
+}
+
+model QuizQuestion {
+  id           String   @id @default(cuid())
+  documentId   String
+  question     String   @db.Text
+  /// array of 4 option strings
+  choices      Json
+  correctIndex Int
+  explanation  String   @db.Text
+  createdAt    DateTime @default(now())
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+}
+
+model ExamSimulation {
+  id         String   @id @default(cuid())
+  documentId String
+  title      String
+  /// array of mixed-type question objects, see lib/schemas/exam.ts
+  questions  Json
+  model      String
+  createdAt  DateTime @default(now())
+
+  document Document      @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  attempts ExamAttempt[]
+}
+
+model ExamAttempt {
+  id               String    @id @default(cuid())
+  examSimulationId String
+  userId           String
+  /// {questionId: answerGiven}
+  answers          Json
+  score            Float?
+  /// per-question correctness + feedback
+  gradedDetail     Json?
+  startedAt        DateTime  @default(now())
+  submittedAt      DateTime?
+
+  examSimulation ExamSimulation @relation(fields: [examSimulationId], references: [id], onDelete: Cascade)
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// --- Moodle / aula virtual integration ---
+
+enum MoodleSyncStatus {
+  NEVER_SYNCED
+  SYNCING
+  SUCCESS
+  PARTIAL
+  FAILED
+}
+
+model MoodleAccount {
+  id               String           @id @default(cuid())
+  userId           String           @unique
+  baseUrl          String
+  username         String
+  /// AES-256-GCM ciphertext, see lib/crypto.ts
+  encryptedPassword String          @db.Text
+  moodleUserId     Int?
+  lastSyncedAt     DateTime?
+  lastSyncStatus   MoodleSyncStatus @default(NEVER_SYNCED)
+  lastSyncMessage  String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courses Course[]
+}
+
+model Course {
+  id              String   @id @default(cuid())
+  moodleAccountId String
+  moodleCourseId  Int
+  fullName        String
+  shortName       String
+  createdAt       DateTime @default(now())
+
+  moodleAccount MoodleAccount  @relation(fields: [moodleAccountId], references: [id], onDelete: Cascade)
+  documents     Document[]
+  events        CourseEvent[]
+
+  @@unique([moodleAccountId, moodleCourseId])
+}
+
+enum CourseEventType {
+  ASSIGNMENT
+  QUIZ
+  EVENT
+}
+
+model CourseEvent {
+  id            String          @id @default(cuid())
+  courseId      String
+  moodleEventId Int
+  title         String
+  type          CourseEventType
+  dueDate       DateTime?
+  createdAt     DateTime        @default(now())
+
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([courseId, moodleEventId])
+}
