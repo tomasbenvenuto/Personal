@@ -20,10 +20,23 @@ function createPrismaClient() {
   return new PrismaClient({ adapter });
 }
 
-// Reuse a single client across hot reloads in dev so we don't exhaust
-// connections; in production each serverless invocation gets its own.
-export const prisma = globalThis.__prisma ?? createPrismaClient();
-
-if (process.env.NODE_ENV !== "production") {
-  globalThis.__prisma = prisma;
+function getPrismaClient(): PrismaClient {
+  if (!globalThis.__prisma) {
+    globalThis.__prisma = createPrismaClient();
+  }
+  return globalThis.__prisma;
 }
+
+// A lazy proxy, not a real client built at module-load time: Next.js's
+// build step imports every route module (even fully dynamic ones) to
+// collect metadata, so constructing the client eagerly here would crash
+// `next build` on any environment where DATABASE_URL isn't set yet at
+// build time (e.g. a Vercel project before its env vars are configured).
+// Deferring the actual connection until a property is first accessed means
+// a missing DATABASE_URL only breaks requests that actually touch the DB,
+// not the build itself.
+export const prisma = new Proxy({} as PrismaClient, {
+  get(_target, prop, receiver) {
+    return Reflect.get(getPrismaClient() as object, prop, receiver);
+  },
+});
